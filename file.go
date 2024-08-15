@@ -13,59 +13,12 @@ import (
 	"time"
 )
 
-func (b *Bitcask) loadHintFiles() error {
-	hintFiles, err := filepath.Glob(filepath.Join(b.directory, "*.hint"))
-	if err != nil {
-		return err
-	}
-
-	for _, hintFile := range hintFiles {
-		file, err := os.Open(hintFile)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-
-		reader := bufio.NewReader(file)
-		for {
-			record := make([]byte, 28) // key size (4) + value size (4) + value pos (8) + timestamp (8) + file id (4)
-			_, err := io.ReadFull(reader, record)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return err
-			}
-
-			keySize := int(binary.BigEndian.Uint32(record[:4]))
-			valueSize := int64(binary.BigEndian.Uint32(record[4:8]))
-			valuePos := int64(binary.BigEndian.Uint64(record[8:16]))
-			timestamp := int64(binary.BigEndian.Uint64(record[16:24]))
-			fileID := int(binary.BigEndian.Uint32(record[24:28]))
-
-			key := make([]byte, keySize)
-			if _, err := io.ReadFull(reader, key); err != nil {
-				return err
-			}
-
-			b.keydir[string(key)] = entry{
-				fileID:    fileID,
-				valueSize: valueSize,
-				valuePos:  valuePos,
-				timestamp: timestamp,
-			}
-		}
-	}
-
-	return nil
-}
-
 func (b *Bitcask) openNewActiveFile() error {
 	if b.activeFile != nil {
 		b.activeFile.Close()
 	}
 
-	b.activeFileID = int(time.Now().UnixNano())
+	b.activeFileID = time.Now().UnixNano()
 	filename := b.getDataFilePath(b.activeFileID)
 	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
@@ -84,11 +37,11 @@ func (b *Bitcask) openNewActiveFile() error {
 	return nil
 }
 
-func (b *Bitcask) getDataFilePath(fileID int) string {
+func (b *Bitcask) getDataFilePath(fileID int64) string {
 	return filepath.Join(b.directory, fmt.Sprintf("%d.data", fileID))
 }
 
-func (b *Bitcask) getHintFilePath(fileID int) string {
+func (b *Bitcask) getHintFilePath(fileID int64) string {
 	return filepath.Join(b.directory, fmt.Sprintf("%d.hint", fileID))
 }
 
@@ -145,7 +98,7 @@ func (b *Bitcask) loadExistingFiles() error {
 	}
 
 	for _, file := range files {
-		fileID, err := strconv.Atoi(strings.TrimSuffix(filepath.Base(file), ".data"))
+		fileID, err := strconv.ParseInt(strings.TrimSuffix(filepath.Base(file), ".data"), 10, 64)
 		if err != nil {
 			return fmt.Errorf("invalid file name: %s", file)
 		}
@@ -162,7 +115,7 @@ func (b *Bitcask) loadExistingFiles() error {
 	return nil
 }
 
-func (b *Bitcask) loadHintFile(fileID int) error {
+func (b *Bitcask) loadHintFile(fileID int64) error {
 	hintPath := b.getHintFilePath(fileID)
 	file, err := os.Open(hintPath)
 	if err != nil {
@@ -176,7 +129,7 @@ func (b *Bitcask) loadHintFile(fileID int) error {
 
 	reader := bufio.NewReader(file)
 	for {
-		record := make([]byte, 28) // key size (4) + value size (4) + value pos (8) + timestamp (8) + file id (4)
+		record := make([]byte, 32) // key size (4) + value size (4) + value pos (8) + timestamp (8) + file id (8)
 		_, err := io.ReadFull(reader, record)
 		if err == io.EOF {
 			break
@@ -186,10 +139,10 @@ func (b *Bitcask) loadHintFile(fileID int) error {
 		}
 
 		keySize := int(binary.BigEndian.Uint32(record[:4]))
-		valueSize := int64(binary.BigEndian.Uint32(record[4:8]))
+		valueSize := int32(binary.BigEndian.Uint32(record[4:8]))
 		valuePos := int64(binary.BigEndian.Uint64(record[8:16]))
 		timestamp := int64(binary.BigEndian.Uint64(record[16:24]))
-		entryFileID := int(binary.BigEndian.Uint32(record[24:28]))
+		entryFileID := int64(binary.BigEndian.Uint64(record[24:32]))
 
 		key := make([]byte, keySize)
 		if _, err := io.ReadFull(reader, key); err != nil {
@@ -207,7 +160,25 @@ func (b *Bitcask) loadHintFile(fileID int) error {
 	return nil
 }
 
-func (b *Bitcask) rebuildHintFile(fileID int) error {
+func (b *Bitcask) writeHintEntry(hintFile *os.File, key string, e entry) error {
+	hintEntry := make([]byte, 32)
+
+	binary.BigEndian.PutUint32(hintEntry[:4], uint32(len(key)))
+	binary.BigEndian.PutUint32(hintEntry[4:8], uint32(e.valueSize))
+	binary.BigEndian.PutUint64(hintEntry[8:16], uint64(e.valuePos))
+	binary.BigEndian.PutUint64(hintEntry[16:24], uint64(e.timestamp))
+	binary.BigEndian.PutUint64(hintEntry[24:32], uint64(e.fileID))
+
+	if _, err := hintFile.Write(hintEntry); err != nil {
+		return err
+	}
+	if _, err := hintFile.Write([]byte(key)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (b *Bitcask) rebuildHintFile(fileID int64) error {
 	dataPath := b.getDataFilePath(fileID)
 	file, err := os.Open(dataPath)
 	if err != nil {
@@ -235,7 +206,7 @@ func (b *Bitcask) rebuildHintFile(fileID int) error {
 
 		timestamp := int64(binary.BigEndian.Uint64(header[4:]))
 		keySize := int(binary.BigEndian.Uint32(header[12:]))
-		valueSize := int64(binary.BigEndian.Uint32(header[16:]))
+		valueSize := int32(binary.BigEndian.Uint32(header[16:]))
 
 		key := make([]byte, keySize)
 		if _, err := io.ReadFull(reader, key); err != nil {
@@ -244,31 +215,20 @@ func (b *Bitcask) rebuildHintFile(fileID int) error {
 
 		valuePos, _ := file.Seek(0, io.SeekCurrent)
 
-		// 写入提示文件
-		hintEntry := make([]byte, 28)
-		binary.BigEndian.PutUint32(hintEntry[:4], uint32(keySize))
-		binary.BigEndian.PutUint32(hintEntry[4:8], uint32(valueSize))
-		binary.BigEndian.PutUint64(hintEntry[8:16], uint64(valuePos))
-		binary.BigEndian.PutUint64(hintEntry[16:24], uint64(timestamp))
-		binary.BigEndian.PutUint32(hintEntry[24:28], uint32(fileID))
-
-		if _, err := hintFile.Write(hintEntry); err != nil {
-			return fmt.Errorf("failed to write hint entry: %w", err)
-		}
-		if _, err := hintFile.Write(key); err != nil {
-			return fmt.Errorf("failed to write key to hint file: %w", err)
-		}
-
 		// 更新keydir
-		b.keydir[string(key)] = entry{
+		et := entry{
 			fileID:    fileID,
 			valueSize: valueSize,
 			valuePos:  valuePos,
 			timestamp: timestamp,
 		}
+		b.keydir[string(key)] = et
 
+		if err := b.writeHintEntry(hintFile, string(key), et); err != nil {
+			return fmt.Errorf("failed to write hint entry: %w", err)
+		}
 		// 跳过值
-		if _, err := file.Seek(valueSize, io.SeekCurrent); err != nil {
+		if _, err := file.Seek(int64(valueSize), io.SeekCurrent); err != nil {
 			return fmt.Errorf("failed to seek past value: %w", err)
 		}
 	}
@@ -276,7 +236,7 @@ func (b *Bitcask) rebuildHintFile(fileID int) error {
 	return nil
 }
 
-func (b *Bitcask) openActiveFile(fileID int) error {
+func (b *Bitcask) openActiveFile(fileID int64) error {
 	filename := b.getDataFilePath(fileID)
 	file, err := os.OpenFile(filename, os.O_RDWR|os.O_APPEND, 0644)
 	if err != nil {
@@ -287,7 +247,7 @@ func (b *Bitcask) openActiveFile(fileID int) error {
 	return nil
 }
 
-func (b *Bitcask) updateMmap(fileID int) error {
+func (b *Bitcask) updateMmap(fileID int64) error {
 	mf, ok := b.mmapedFiles[fileID]
 	if !ok {
 		// 如果内存映射不存在，创建一个新的

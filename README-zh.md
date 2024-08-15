@@ -1,11 +1,11 @@
 Translations: [English](README.md) | [简体中文](README-zh.md)
 
-⚠️ 大部分代码由 Claude Sonnet 3.5 和 GitHub Copilot 生成，因此可能存在错误，请谨慎使用。
+⚠️ 大部分代码由 `Claude Sonnet 3.5` 和 `GitHub Copilot` 生成，因此可能存在错误，请谨慎使用。
 
 
 # go-bitcask
 
-go-bitcask 是一个用 Go 语言编写的简单、快速且高效的键值存储。它的设计灵感来自 Riak 中使用的 Bitcask 存储模型(https://riak.com/assets/bitcask-intro.pdf)。
+go-bitcask 是一个用 Go 语言编写的简单、快速且高效的键值存储。它的设计灵感来自 Riak 中使用的 [Bitcask](docs/bitcask-intro.pdf) 存储模型(https://riak.com/assets/bitcask-intro.pdf)。
 
 ## 特性
 

@@ -37,7 +37,7 @@ func (b *Bitcask) merge() error {
 	}
 
 	// 创建新的合并文件
-	mergedFileID := int(time.Now().UnixNano())
+	mergedFileID := time.Now().UnixNano()
 	mergedFilename := b.getDataFilePath(mergedFileID)
 	mergedFile, err := os.Create(mergedFilename)
 	if err != nil {
@@ -88,25 +88,17 @@ func (b *Bitcask) merge() error {
 		}
 
 		// 更新keydir
-		b.keydir[key] = entry{
+		et := entry{
 			fileID:    mergedFileID,
-			valueSize: int64(len(value)),
+			valueSize: int32(len(value)),
 			valuePos:  valuePos + headerSize + int64(len(key)),
 			timestamp: record.timestamp,
 		}
+		b.keydir[key] = et
 
 		// 写入hint文件
-		hintEntry := make([]byte, 28)
-		binary.BigEndian.PutUint32(hintEntry[:4], uint32(len(key)))
-		binary.BigEndian.PutUint32(hintEntry[4:8], uint32(len(value)))
-		binary.BigEndian.PutUint64(hintEntry[8:16], uint64(valuePos+headerSize+int64(len(key))))
-		binary.BigEndian.PutUint64(hintEntry[16:24], uint64(record.timestamp))
-		binary.BigEndian.PutUint32(hintEntry[24:28], uint32(mergedFileID))
-
-		if _, err := mergedHintFile.Write(hintEntry); err != nil {
-			return err
-		}
-		if _, err := mergedHintFile.Write([]byte(key)); err != nil {
+		err = b.writeHintEntry(mergedHintFile, key, et)
+		if err != nil {
 			return err
 		}
 	}

@@ -9,18 +9,18 @@ import (
 type Bitcask struct {
 	directory    string
 	activeFile   *os.File
-	activeFileID int
+	activeFileID int64
 	keydir       map[string]entry
 	mutex        sync.RWMutex
 	config       *Config
-	mmapedFiles  map[int]*MmapedFile
+	mmapedFiles  map[int64]*MmapedFile
 }
 
 type entry struct {
-	fileID    int
-	valueSize int64
+	valueSize int32
 	valuePos  int64
 	timestamp int64
+	fileID    int64
 }
 
 type MmapedFile struct {

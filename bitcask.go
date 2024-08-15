@@ -28,7 +28,7 @@ func Open(dir string, opts ...ConfOption) (*Bitcask, error) {
 		directory:   dir,
 		keydir:      make(map[string]entry),
 		config:      config,
-		mmapedFiles: make(map[int]*MmapedFile),
+		mmapedFiles: make(map[int64]*MmapedFile),
 	}
 
 	// 加载现有的数据文件
@@ -45,6 +45,10 @@ func Open(dir string, opts ...ConfOption) (*Bitcask, error) {
 		// 打开最后一个数据文件作为活动文件
 		if err := b.openActiveFile(b.activeFileID); err != nil {
 			return nil, fmt.Errorf("failed to open active file: %w", err)
+		}
+		// 更新内存映射
+		if err := b.updateMmap(b.activeFileID); err != nil {
+			return nil, fmt.Errorf("failed to update mmap: %w", err)
 		}
 	}
 
@@ -92,6 +96,20 @@ func (b *Bitcask) put(key string, value []byte) error {
 		if err := b.openNewActiveFile(); err != nil {
 			return fmt.Errorf("failed to open new active file: %w", err)
 		}
+		// 创建新的hint文件
+		hintFilename := b.getHintFilePath(b.activeFileID)
+		hintFile, err := os.Create(hintFilename)
+		if err != nil {
+			return fmt.Errorf("failed to create hint file: %w", err)
+		}
+		defer hintFile.Close()
+
+		// 将当前keydir中的所有条目写入新的hint文件
+		for k, e := range b.keydir {
+			if err := b.writeHintEntry(hintFile, k, e); err != nil {
+				return fmt.Errorf("failed to write hint entry: %w", err)
+			}
+		}
 	}
 
 	valuePos, err := b.activeFile.Seek(0, io.SeekCurrent)
@@ -118,7 +136,7 @@ func (b *Bitcask) put(key string, value []byte) error {
 
 	b.keydir[key] = entry{
 		fileID:    b.activeFileID,
-		valueSize: int64(valueSize),
+		valueSize: int32(valueSize),
 		valuePos:  valuePos + headerSize + int64(keySize),
 		timestamp: timestamp,
 	}
@@ -146,11 +164,11 @@ func (b *Bitcask) Get(key string) ([]byte, error) {
 		return nil, fmt.Errorf("mmap file not found for file ID %d", e.fileID)
 	}
 
-	if e.valuePos+e.valueSize > int64(len(mf.data)) {
+	if e.valuePos+int64(e.valueSize) > int64(len(mf.data)) {
 		return nil, fmt.Errorf("value position out of range")
 	}
 
-	value := mf.data[e.valuePos : e.valuePos+e.valueSize]
+	value := mf.data[e.valuePos : e.valuePos+int64(e.valueSize)]
 
 	if b.config.CompressData {
 		r, err := zlib.NewReader(bytes.NewReader(value))
@@ -265,6 +283,21 @@ func (b *Bitcask) Close() error {
 	defer b.mutex.Unlock()
 
 	if b.activeFile != nil {
+		// 创建最后的hint文件
+		hintFilename := b.getHintFilePath(b.activeFileID)
+		hintFile, err := os.Create(hintFilename)
+		if err != nil {
+			return fmt.Errorf("failed to create final hint file: %w", err)
+		}
+		defer hintFile.Close()
+
+		// 将当前keydir中的所有条目写入hint文件
+		for k, e := range b.keydir {
+			if err := b.writeHintEntry(hintFile, k, e); err != nil {
+				return fmt.Errorf("failed to write final hint entry: %w", err)
+			}
+		}
+
 		if err := b.activeFile.Close(); err != nil {
 			return fmt.Errorf("failed to close active file: %w", err)
 		}
