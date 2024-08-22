@@ -31,16 +31,16 @@ Here is a simple example of how to use go-bitcask:
 package main
 
 import (
-    "fmt"
-    "github.com/yonwoo9/go-bitcask"
+	"fmt"
+	"github.com/yonwoo9/go-bitcask"
 )
 
 func main() {
-    db, err := bitcask.Open("test")
-    if err != nil {
-    panic(err)
-}
-defer db.Close()
+	db, err := bitcask.Open("test")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
 
 	// Put a key-value pair
 	if err = db.Put("key1", []byte("value1")); err != nil {
@@ -98,6 +98,7 @@ defer db.Close()
 		fmt.Printf("Iterator key:%s, val:%s\n", key, string(value))
 	}
 }
+
 ```
 
 ## API
@@ -121,8 +122,7 @@ func (b *Bitcask) BatchPut(batch map[string][]byte) error
 ```
 Stores multiple key-value pairs in the Bitcask database in a batch operation.
 ```go
-func (b *Bitcask) BatchGet(keys []string) (map[string][]byte,
-error)
+func (b *Bitcask) BatchGet(keys []string) (map[string][]byte, error)
 ```
 Retrieves the values associated with multiple keys from the Bitcask database in a batch operation.
 ```go
